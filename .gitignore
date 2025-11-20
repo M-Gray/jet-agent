@@ -1,0 +1,13 @@
+target/
+**/*.rs.bk
+**/*.rlib
+
+# Dependency lock file (optional for libraries, recommended for executables)
+# Cargo.lock
+
+# Operating system and editor specific files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

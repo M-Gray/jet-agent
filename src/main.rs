@@ -1,9 +1,10 @@
 use bollard::Docker;
+use futures_util::future::FutureExt;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 
-const JETAGENT: &str = "/etc/jet-agent/agent.yaml";
+const JETAGENT: &str = "/etc/jet-agent/agent.json";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::fs::File::open(JETAGENT).expect("Unable to open config file");
@@ -24,8 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config_data.security.certificate_file.clone().into(),
             config_data.security.key_file.clone().into(),
         );
-
-    Docker::connect_with_socket_defaults();
+    let docker_agent = match Docker::connect_with_socket_defaults() {
+        Ok(docker) => docker,
+        Err(e) => panic!("{}", e),
+    };
+    let version = docker_agent.version().await.unwrap();
+    println!("{:?}", version);
+    Ok(())
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -50,7 +56,7 @@ struct SecurityCerts {
     key_file: String,
 }
 
-async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::ConnectOptions) {
+/*async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::ConnectOptions) {
     let client = match async_nats::connect_with_options(
         config_data.networking.nats_server.clone(),
         nats_options,
@@ -226,3 +232,4 @@ async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::Connect
         }
     }
 }
+*/

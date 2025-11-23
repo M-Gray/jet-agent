@@ -1,8 +1,11 @@
 use bollard::Docker;
+use bytes::Bytes;
+use futures::StreamExt;
 use futures_util::future::FutureExt;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
+use std::ops::Deref;
 
 const JETAGENT: &str = "/etc/jet-agent/agent.json";
 #[tokio::main]
@@ -31,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let version = docker_agent.info().await.unwrap();
     println!("{:?}", version);
+    daemon_mode(config_data, nats_options).await;
     Ok(())
 }
 
@@ -55,8 +59,12 @@ struct SecurityCerts {
     certificate_file: String,
     key_file: String,
 }
-
-/*async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::ConnectOptions) {
+#[derive(Serialize, Deserialize, Debug)]
+struct JetTalk {
+    command: String,
+    args: Vec<String>,
+}
+async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::ConnectOptions) {
     let client = match async_nats::connect_with_options(
         config_data.networking.nats_server.clone(),
         nats_options,
@@ -67,7 +75,7 @@ struct SecurityCerts {
         Err(err) => panic!("{err}"),
     };
     let mut subscriber = client
-        .subscribe(config_data.identity.agent_id.clone())
+        .subscribe(format!("dockerd-{}", config_data.identity.agent_id))
         .await
         .unwrap();
     while let Some(message) = subscriber.next().await {
@@ -80,156 +88,17 @@ struct SecurityCerts {
             Err(err) => panic!("{err}"),
         };
         match data.command.as_str() {
-            "create" => {
-                let flav = get_flavor(get_flav_command(data.args[1].clone()));
-                match create_fc_instance(
-                    config_data.clone(),
-                    data.args[0].as_str(),
-                    flav,
-                    sql_pool.clone(),
-                    data.args[2].as_str(),
-                )
-                .await
-                {
-                    Ok(_) => {}
-                    Err(err) => {
-                        error!("{err}");
-                    }
-                }
-            }
-            "delete" => if delete_fc_instance(sql_pool.clone(), data.args[0].as_str()).await {},
-            "create-storage" => {
-                persistent_storage::cmd_create_persistent_storage(
-                    config_data.clone(),
-                    data.args[0].as_str(),
-                    data.args[1].as_str(),
-                    sql_pool.clone(),
-                    data.args[2].to_string(),
-                )
-                .await
-                .expect("");
-            }
-            "restart" => {
-                restart_instance(
-                    config_data.clone(),
-                    data.args[0].to_string(),
-                    get_flavor(get_flav_command(data.args[1].clone())),
-                    sql_pool.clone(),
-                )
-                .await;
-            }
-            "stop" => {
-                stop_fc_instance(data.args[0].to_string(), sql_pool.clone()).await;
-            }
-            "add-description" => {
-                add_instance_description(
-                    sql_pool.clone(),
-                    data.args[0].to_string(),
-                    data.args[1].to_string(),
-                )
-                .await;
-            }
-            "add-floating-ip" => {
-                remove_nft(sql_pool.clone(), data.args[0].clone()).await;
-                add_floating_ip(sql_pool.clone(), data.args[0].clone(), data.args[1].clone()).await;
-            }
-            "list-storage" => {
-                match persistent_storage::cmd_list_persistent_storage(sql_pool.clone()).await {
-                    Ok(data) => {
-                        if let Some(reply_subject) = message.reply {
-                            let json = match serde_json::to_string(&data) {
-                                Ok(json) => json,
-                                Err(err) => {
-                                    error!("{err}");
-                                    return;
-                                }
-                            };
-                            println!("{}", json);
-                            match client.publish(reply_subject, json.into()).await {
-                                Ok(data) => {
-                                    error!("{:?}", data);
-                                }
-                                Err(err) => error!("{err}"),
-                            };
-                            match client.flush().await {
-                                Ok(_) => {}
-                                Err(err) => error!("{err}"),
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        error!("{err}")
-                    }
-                }
-            }
-            "instance" => {
-                let instance_data = get_instance(sql_pool.clone(), data.args[0].clone()).await;
-                if let Some(reply_subject) = message.reply {
-                    let json = match serde_json::to_string(&instance_data) {
-                        Ok(json) => json,
-                        Err(err) => {
-                            error!("{err}");
-                            return;
-                        }
-                    };
-                    match client.publish(reply_subject, json.into()).await {
-                        Ok(data) => {
-                            info!("{:?}", data);
-                        }
-                        Err(err) => error!("{err}"),
-                    };
-                    match client.flush().await {
-                        Ok(_) => {}
-                        Err(err) => error!("{err}"),
-                    }
-                }
-            }
-            "list" => {
-                let data_list = list_fc_instances_internal(sql_pool.clone()).await;
-                let mut liststatus: Vec<MiniFcE> = Vec::new();
-                for data in data_list {
-                    let current = MiniFcE {
-                        fc_instance_name: data.fc_instance_name.clone(),
-                        fc_socket_location: data.fc_socket_location.clone(),
-                        fc_process_id: data.fc_process_id.clone(),
-                        fc_chroot_dir: data.fc_chroot_dir.clone(),
-                        fc_container_id: data.fc_container_id.clone(),
-                        fc_ip_address: data.ip_address.clone(),
-                        fc_route_ip_address: data.route_ip_address.clone(),
-                        fc_tap_device: data.tap_device_name.clone(),
-                        fc_vcpu: data.fc_vcpu.clone(),
-                        fc_memory: data.fc_memory.clone(),
-                        fc_description: data.fc_description.clone(),
-                        fc_floating_ip: data.public_ip.clone(),
-                        fc_created: data.fc_created.clone(),
-                        fc_status: Path::new(format!("/proc/{}/", data.fc_process_id).as_str())
-                            .exists(),
-                    };
-                    liststatus.push(current.clone())
-                }
-                let json = match serde_json::to_string(&liststatus) {
-                    Ok(json) => json,
-                    Err(err) => {
-                        error!("{err}");
-                        return;
-                    }
-                };
-                println!("{}", json);
-                if let Some(reply_subject) = message.reply {
-                    match client.publish(reply_subject, json.into()).await {
-                        Ok(data) => {
-                            info!("{:?}", data);
-                        }
-                        Err(err) => error!("{err}"),
-                    };
-                    match client.flush().await {
-                        Ok(_) => {}
-                        Err(err) => error!("{err}"),
-                    }
-                }
-            }
+            "create" => {}
+            "delete" => {}
+            "create-storage" => {}
+            "restart" => {}
+            "stop" => {}
+            "add-description" => {}
+            "add-floating-ip" => {}
+            "list-storage" => {}
+            "instance" => {}
+            "list" => {}
             _ => {}
         }
     }
 }
-*/

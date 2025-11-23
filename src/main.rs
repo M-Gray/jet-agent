@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(docker) => docker,
         Err(e) => panic!("{}", e),
     };
-    let version = docker_agent.version().await.unwrap();
+    let version = docker_agent.info().await.unwrap();
     println!("{:?}", version);
     Ok(())
 }

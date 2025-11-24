@@ -1,9 +1,10 @@
-use std::collections::HashMap;
 use bollard::Docker;
+use std::collections::HashMap;
 //use bytes::Bytes;
 use futures::StreamExt;
 //use futures_util::future::FutureExt;
 //use log::{error, info};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::ops::Deref;
@@ -12,6 +13,14 @@ const JETAGENT: &str = "/etc/jet-agent/agent.json";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::fs::File::open(JETAGENT).expect("Unable to open config file");
+    let log_data = log4rs::init_file("agent_logs.yml", Default::default());
+    match log_data {
+        Ok(_) => {}
+        Err(err) => {
+            info!("{}", err);
+            panic!("{err}");
+        }
+    }
     let mut buf_reader = std::io::BufReader::new(file);
     let mut json_config = String::new();
     match buf_reader.read_to_string(&mut json_config) {
@@ -31,12 +40,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     let docker_agent = match Docker::connect_with_socket_defaults() {
         Ok(docker) => docker,
-        Err(e) => panic!("{}", e),
+        Err(e) => {
+            error!("{}", e);
+            panic!("{e}");
+        }
     };
     //let version = docker_agent.info().await.unwrap();
-   // println!("{:?}", version);
+    // println!("{:?}", version);
     list_containers(&docker_agent).await?;
-   // daemon_mode(config_data, nats_options).await;
+    // daemon_mode(config_data, nats_options).await;
     Ok(())
 }
 
@@ -105,8 +117,7 @@ async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::Connect
     }
 }
 
-
-async fn list_containers(docker: &Docker)-> Result<(), Box<dyn std::error::Error>>{
+async fn list_containers(docker: &Docker) -> Result<(), Box<dyn std::error::Error>> {
     let mut filter = HashMap::new();
     filter.insert(String::from("status"), vec![String::from("running")]);
     let containers = &docker
@@ -118,6 +129,7 @@ async fn list_containers(docker: &Docker)-> Result<(), Box<dyn std::error::Error
         ))
         .await?;
     if containers.is_empty() {
+        error!("no running containers");
         panic!("no running containers");
     } else {
         Ok(for container in containers {
@@ -136,7 +148,7 @@ async fn list_containers(docker: &Docker)-> Result<(), Box<dyn std::error::Error
             while let Some(Ok(stats)) = stream.next().await {
                 println!(
                     "{} - {:?}: {:?} {:?} {:?}",
-                    container_id, &container.names, container.image,container.command,stats
+                    container_id, &container.names, container.image, container.command, stats
                 );
             }
         })

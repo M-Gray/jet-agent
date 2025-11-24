@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use futures::StreamExt;
 //use futures_util::future::FutureExt;
 //use log::{error, info};
+use bollard::models::{
+    ContainerSummaryHostConfig, ContainerSummaryNetworkSettings, ContainerSummaryStateEnum,
+    MountPoint, OciDescriptor, Port,
+};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
@@ -78,6 +82,25 @@ struct JetTalk {
     command: String,
     args: Vec<String>,
 }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ContainerSummary {
+    pub id: Option<String>,
+    pub names: Option<Vec<String>>,
+    pub image: Option<String>,
+    pub image_id: Option<String>,
+    pub image_manifest_descriptor: Option<OciDescriptor>,
+    pub command: Option<String>,
+    pub created: Option<i64>,
+    pub ports: Option<Vec<Port>>,
+    pub size_rw: Option<i64>,
+    pub size_root_fs: Option<i64>,
+    pub labels: Option<HashMap<String, String>>,
+    pub state: Option<ContainerSummaryStateEnum>,
+    pub status: Option<String>,
+    pub host_config: Option<ContainerSummaryHostConfig>,
+    pub network_settings: Option<ContainerSummaryNetworkSettings>,
+    pub mounts: Option<Vec<MountPoint>>,
+}
 async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::ConnectOptions) {
     let client = match async_nats::connect_with_options(
         config_data.networking.nats_server.clone(),
@@ -146,10 +169,8 @@ async fn list_containers(docker: &Docker) -> Result<(), Box<dyn std::error::Erro
                 .take(1);
 
             while let Some(Ok(stats)) = stream.next().await {
-                println!(
-                    "{} - {:?}: {:?} {:?} {:?}",
-                    container_id, &container.names, container.image, container.command, stats
-                );
+                let docker_json = serde_json::to_string(&container)?;
+                println!("{}", docker_json);
             }
         })
     }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use bollard::Docker;
 //use bytes::Bytes;
 use futures::StreamExt;
@@ -32,9 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(docker) => docker,
         Err(e) => panic!("{}", e),
     };
-    let version = docker_agent.info().await.unwrap();
-    println!("{:?}", version);
-    daemon_mode(config_data, nats_options).await;
+    //let version = docker_agent.info().await.unwrap();
+   // println!("{:?}", version);
+    list_containers(&docker_agent).await?;
+   // daemon_mode(config_data, nats_options).await;
     Ok(())
 }
 
@@ -100,5 +102,43 @@ async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::Connect
             "list" => {}
             _ => {}
         }
+    }
+}
+
+
+async fn list_containers(docker: &Docker)-> Result<(), Box<dyn std::error::Error>>{
+    let mut filter = HashMap::new();
+    filter.insert(String::from("status"), vec![String::from("running")]);
+    let containers = &docker
+        .list_containers(Some(
+            bollard::query_parameters::ListContainersOptionsBuilder::default()
+                .all(true)
+                .filters(&filter)
+                .build(),
+        ))
+        .await?;
+    if containers.is_empty() {
+        panic!("no running containers");
+    } else {
+        Ok(for container in containers {
+            let container_id = container.id.as_ref().unwrap();
+            let stream = &mut docker
+                .stats(
+                    container_id,
+                    Some(
+                        bollard::query_parameters::StatsOptionsBuilder::default()
+                            .stream(false)
+                            .build(),
+                    ),
+                )
+                .take(1);
+
+            while let Some(Ok(stats)) = stream.next().await {
+                println!(
+                    "{} - {:?}: {:?} {:?}",
+                    container_id, &container.names, container.image, stats
+                );
+            }
+        })
     }
 }

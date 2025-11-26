@@ -101,7 +101,7 @@ pub struct ContainerSummary {
     pub network_settings: Option<ContainerSummaryNetworkSettings>,
     pub mounts: Option<Vec<MountPoint>>,
 }
-async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::ConnectOptions) {
+async fn daemon_mode(docker_agent: &Docker,config_data:AgentConfig, nats_options: async_nats::ConnectOptions) {
     let client = match async_nats::connect_with_options(
         config_data.networking.nats_server.clone(),
         nats_options,
@@ -125,7 +125,12 @@ async fn daemon_mode(config_data: AgentConfig, nats_options: async_nats::Connect
             Err(err) => panic!("{err}"),
         };
         match data.command.as_str() {
-            "create" => {}
+            "list-docker" => {
+               match list_containers(docker_agent).await{
+                   Ok(_) => {}
+                   Err(err) => {error!("{}", err);}
+               }
+            }
             "delete" => {}
             "create-storage" => {}
             "restart" => {}
@@ -171,6 +176,25 @@ async fn list_containers(docker: &Docker) -> Result<(), Box<dyn std::error::Erro
             while let Some(Ok(stats)) = stream.next().await {
                 let docker_json = serde_json::to_string(&container)?;
                 println!("{}", docker_json);
+                if let Some(reply_subject) = message.reply {
+                    let json = match serde_json::to_string(&instance_data) {
+                        Ok(json) => json,
+                        Err(err) => {
+                            error!("{err}");
+                            return;
+                        }
+                    };
+                    match client.publish(reply_subject, json.into()).await {
+                        Ok(data) => {
+                            info!("{:?}", data);
+                        }
+                        Err(err) => error!("{err}"),
+                    };
+                    match client.flush().await {
+                        Ok(_) => {}
+                        Err(err) => error!("{err}"),
+                    }
+                }
             }
         })
     }

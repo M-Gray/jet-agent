@@ -11,6 +11,7 @@ use bollard::models::{
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
+use std::mem::take;
 use std::ops::Deref;
 
 const JETAGENT: &str = "/etc/jet-agent/agent.json";
@@ -49,10 +50,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("{e}");
         }
     };
-    //let version = docker_agent.info().await.unwrap();
-    // println!("{:?}", version);
-    list_containers(&docker_agent).await?;
-    // daemon_mode(config_data, nats_options).await;
+    let docker_info = list_containers(&docker_agent).await;
+    let current_containers = ContainerSummary {
+        containers: docker_info,
+    };
+    let containers_json = match serde_json::to_string(&current_containers) {
+        Ok(json) => json,
+        Err(err) => {
+            panic!("{err}");
+        }
+    };
+    println!("{:#?}", containers_json);
     Ok(())
 }
 
@@ -82,26 +90,16 @@ struct JetTalk {
     command: String,
     args: Vec<String>,
 }
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ContainerSummary {
-    pub id: Option<String>,
-    pub names: Option<Vec<String>>,
-    pub image: Option<String>,
-    pub image_id: Option<String>,
-    pub image_manifest_descriptor: Option<OciDescriptor>,
-    pub command: Option<String>,
-    pub created: Option<i64>,
-    pub ports: Option<Vec<Port>>,
-    pub size_rw: Option<i64>,
-    pub size_root_fs: Option<i64>,
-    pub labels: Option<HashMap<String, String>>,
-    pub state: Option<ContainerSummaryStateEnum>,
-    pub status: Option<String>,
-    pub host_config: Option<ContainerSummaryHostConfig>,
-    pub network_settings: Option<ContainerSummaryNetworkSettings>,
-    pub mounts: Option<Vec<MountPoint>>,
+    containers: Vec<bollard_stubs::models::ContainerSummary>,
 }
-async fn daemon_mode(docker_agent: &Docker,config_data:AgentConfig, nats_options: async_nats::ConnectOptions) {
+async fn daemon_mode(
+    docker_agent: &Docker,
+    config_data: AgentConfig,
+    nats_options: async_nats::ConnectOptions,
+) {
     let client = match async_nats::connect_with_options(
         config_data.networking.nats_server.clone(),
         nats_options,
@@ -124,13 +122,14 @@ async fn daemon_mode(docker_agent: &Docker,config_data:AgentConfig, nats_options
             Ok(s) => s,
             Err(err) => panic!("{err}"),
         };
-        match data.command.as_str() {
+        /*match data.command.as_str() {
             "list-docker" => {
-               match list_containers(docker_agent).await{
-                   Ok(_) => {}
-                   Err(err) => {error!("{}", err);}
-               }
-            }
+              if let docker_info = match list_containers(docker_agent).await {
+                  Ok(data) => { data }
+                  Err(err) => {
+                      panic!("{}", err);
+                  }
+              }
             "delete" => {}
             "create-storage" => {}
             "restart" => {}
@@ -139,63 +138,40 @@ async fn daemon_mode(docker_agent: &Docker,config_data:AgentConfig, nats_options
             "add-floating-ip" => {}
             "list-storage" => {}
             "instance" => {}
-            "list" => {}
+            "list" => {
+
+                }
+
             _ => {}
-        }
+        }*/
     }
 }
 
-async fn list_containers(docker: &Docker) -> Result<(), Box<dyn std::error::Error>> {
+async fn list_containers(docker: &Docker) -> Vec<bollard_stubs::models::ContainerSummary> {
     let mut filter = HashMap::new();
-    filter.insert(String::from("status"), vec![String::from("running")]);
-    let containers = &docker
+    filter.insert(
+        String::from("status"),
+        vec![
+            String::from("exited"),
+            String::from("running"),
+            String::from("created"),
+            String::from("removing"),
+            String::from("paused"),
+            String::from("dead"),
+        ],
+    );
+    match docker
         .list_containers(Some(
             bollard::query_parameters::ListContainersOptionsBuilder::default()
                 .all(true)
                 .filters(&filter)
                 .build(),
         ))
-        .await?;
-    if containers.is_empty() {
-        error!("no running containers");
-        panic!("no running containers");
-    } else {
-        Ok(for container in containers {
-            let container_id = container.id.as_ref().unwrap();
-            let stream = &mut docker
-                .stats(
-                    container_id,
-                    Some(
-                        bollard::query_parameters::StatsOptionsBuilder::default()
-                            .stream(false)
-                            .build(),
-                    ),
-                )
-                .take(1);
-
-            while let Some(Ok(stats)) = stream.next().await {
-                let docker_json = serde_json::to_string(&container)?;
-                println!("{}", docker_json);
-                if let Some(reply_subject) = message.reply {
-                    let json = match serde_json::to_string(&instance_data) {
-                        Ok(json) => json,
-                        Err(err) => {
-                            error!("{err}");
-                            return;
-                        }
-                    };
-                    match client.publish(reply_subject, json.into()).await {
-                        Ok(data) => {
-                            info!("{:?}", data);
-                        }
-                        Err(err) => error!("{err}"),
-                    };
-                    match client.flush().await {
-                        Ok(_) => {}
-                        Err(err) => error!("{err}"),
-                    }
-                }
-            }
-        })
+        .await
+    {
+        Ok(c) => c,
+        Err(err) => {
+            panic!("{err}");
+        }
     }
 }
